@@ -17,30 +17,36 @@
 
 package com.android.mms.ui;
 
-import com.android.mms.MmsApp;
-import com.android.mms.MmsConfig;
-import com.android.mms.R;
-
 import android.app.ActionBar;
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
+import android.net.Uri;
 import android.os.Bundle;
 import android.preference.CheckBoxPreference;
 import android.preference.ListPreference;
 import android.preference.Preference;
+import android.preference.Preference.OnPreferenceChangeListener;
 import android.preference.PreferenceActivity;
 import android.preference.PreferenceCategory;
 import android.preference.PreferenceManager;
 import android.preference.PreferenceScreen;
-import android.preference.Preference.OnPreferenceChangeListener;
+import android.preference.RingtonePreference;
 import android.provider.SearchRecentSuggestions;
+import android.text.TextUtils;
 import android.view.Menu;
 import android.view.MenuItem;
 
+import com.android.mms.MmsApp;
+import com.android.mms.MmsConfig;
+import com.android.mms.R;
+import com.android.mms.transaction.TransactionService;
 import com.android.mms.util.Recycler;
 
 /**
@@ -55,8 +61,6 @@ public class MessagingPreferenceActivity extends PreferenceActivity
     public static final String PRIORITY                 = "pref_key_mms_priority";
     public static final String READ_REPORT_MODE         = "pref_key_mms_read_reports";
     public static final String SMS_DELIVERY_REPORT_MODE = "pref_key_sms_delivery_reports";
-    public static final String SMS_SPLIT_MESSAGE        = "pref_key_sms_split_160";
-    public static final String SMS_SPLIT_COUNTER        = "pref_key_sms_split_counter";
     public static final String NOTIFICATION_ENABLED     = "pref_key_enable_notifications";
     public static final String NOTIFICATION_VIBRATE     = "pref_key_vibrate";
     public static final String NOTIFICATION_VIBRATE_WHEN= "pref_key_vibrateWhen";
@@ -64,7 +68,7 @@ public class MessagingPreferenceActivity extends PreferenceActivity
     public static final String AUTO_RETRIEVAL           = "pref_key_mms_auto_retrieval";
     public static final String RETRIEVAL_DURING_ROAMING = "pref_key_mms_retrieval_during_roaming";
     public static final String AUTO_DELETE              = "pref_key_auto_delete";
-    public static final String DISPLAY_FULLDATE         = "pref_key_display_fulldate";
+    public static final String GROUP_MMS_MODE           = "pref_key_mms_group_mms";
 
     // Menu entries
     private static final int MENU_RESTORE_DEFAULTS    = 1;
@@ -73,38 +77,26 @@ public class MessagingPreferenceActivity extends PreferenceActivity
     private Preference mSmsDeliveryReportPref;
     private Preference mMmsLimitPref;
     private Preference mMmsDeliveryReportPref;
+    private Preference mMmsGroupMmsPref;
     private Preference mMmsReadReportPref;
     private Preference mManageSimPref;
     private Preference mClearHistoryPref;
-    private ListPreference mVibrateWhenPref;
+    private CheckBoxPreference mVibratePref;
     private CheckBoxPreference mEnableNotificationsPref;
+    private CheckBoxPreference mMmsAutoRetrievialPref;
+    private RingtonePreference mRingtonePref;
     private Recycler mSmsRecycler;
     private Recycler mMmsRecycler;
     private static final int CONFIRM_CLEAR_SEARCH_HISTORY_DIALOG = 3;
-    private CharSequence[] mVibrateEntries;
-    private CharSequence[] mVibrateValues;
 
     @Override
     protected void onCreate(Bundle icicle) {
         super.onCreate(icicle);
-        addPreferencesFromResource(R.xml.preferences);
 
-        mManageSimPref = findPreference("pref_key_manage_sim_messages");
-        mSmsLimitPref = findPreference("pref_key_sms_delete_limit");
-        mSmsDeliveryReportPref = findPreference("pref_key_sms_delivery_reports");
-        mMmsDeliveryReportPref = findPreference("pref_key_mms_delivery_reports");
-        mMmsReadReportPref = findPreference("pref_key_mms_read_reports");
-        mMmsLimitPref = findPreference("pref_key_mms_delete_limit");
-        mClearHistoryPref = findPreference("pref_key_mms_clear_history");
-        mEnableNotificationsPref = (CheckBoxPreference) findPreference(NOTIFICATION_ENABLED);
-        mVibrateWhenPref = (ListPreference) findPreference(NOTIFICATION_VIBRATE_WHEN);
-
-        mVibrateEntries = getResources().getTextArray(R.array.prefEntries_vibrateWhen);
-        mVibrateValues = getResources().getTextArray(R.array.prefValues_vibrateWhen);
+        loadPrefs();
 
         ActionBar actionBar = getActionBar();
         actionBar.setDisplayHomeAsUpEnabled(true);
-        setMessagePreferences();
     }
 
     @Override
@@ -115,6 +107,39 @@ public class MessagingPreferenceActivity extends PreferenceActivity
         // we have to reload it whenever we resume.
         setEnabledNotificationsPref();
         registerListeners();
+    }
+
+    private void loadPrefs() {
+        addPreferencesFromResource(R.xml.preferences);
+
+        mManageSimPref = findPreference("pref_key_manage_sim_messages");
+        mSmsLimitPref = findPreference("pref_key_sms_delete_limit");
+        mSmsDeliveryReportPref = findPreference("pref_key_sms_delivery_reports");
+        mMmsDeliveryReportPref = findPreference("pref_key_mms_delivery_reports");
+        mMmsGroupMmsPref = findPreference("pref_key_mms_group_mms");
+        mMmsReadReportPref = findPreference("pref_key_mms_read_reports");
+        mMmsLimitPref = findPreference("pref_key_mms_delete_limit");
+        mClearHistoryPref = findPreference("pref_key_mms_clear_history");
+        mEnableNotificationsPref = (CheckBoxPreference) findPreference(NOTIFICATION_ENABLED);
+        mMmsAutoRetrievialPref = (CheckBoxPreference) findPreference(AUTO_RETRIEVAL);
+        mVibratePref = (CheckBoxPreference) findPreference(NOTIFICATION_VIBRATE);
+        mRingtonePref = (RingtonePreference) findPreference(NOTIFICATION_RINGTONE);
+
+        setMessagePreferences();
+    }
+
+    private void restoreDefaultPreferences() {
+        PreferenceManager.getDefaultSharedPreferences(this).edit().clear().apply();
+        setPreferenceScreen(null);
+        loadPrefs();
+
+        // NOTE: After restoring preferences, the auto delete function (i.e. message recycler)
+        // will be turned off by default. However, we really want the default to be turned on.
+        // Because all the prefs are cleared, that'll cause:
+        // ConversationList.runOneTimeStorageLimitCheckForLegacyMessages to get executed the
+        // next time the user runs the Messaging app and it will either turn on the setting
+        // by default, or if the user is over the limits, encourage them to turn on the setting
+        // manually.
     }
 
     private void setMessagePreferences() {
@@ -144,28 +169,35 @@ public class MessagingPreferenceActivity extends PreferenceActivity
                 (PreferenceCategory)findPreference("pref_key_storage_settings");
             storageOptions.removePreference(findPreference("pref_key_mms_delete_limit"));
         } else {
-            if (!MmsConfig.getMMSDeliveryReportsEnabled()) {
-                PreferenceCategory mmsOptions =
+            PreferenceCategory mmsOptions =
                     (PreferenceCategory)findPreference("pref_key_mms_settings");
+            if (!MmsConfig.getMMSDeliveryReportsEnabled()) {
                 mmsOptions.removePreference(mMmsDeliveryReportPref);
             }
             if (!MmsConfig.getMMSReadReportsEnabled()) {
-                PreferenceCategory mmsOptions =
-                    (PreferenceCategory)findPreference("pref_key_mms_settings");
                 mmsOptions.removePreference(mMmsReadReportPref);
+            }
+            // If the phone's SIM doesn't know it's own number, disable group mms.
+            if (!MmsConfig.getGroupMmsEnabled() ||
+                    TextUtils.isEmpty(MessageUtils.getLocalNumber())) {
+                mmsOptions.removePreference(mMmsGroupMmsPref);
             }
         }
 
         setEnabledNotificationsPref();
 
-        // If needed, migrate vibration setting from a previous version
+        // If needed, migrate vibration setting from the previous tri-state setting stored in
+        // NOTIFICATION_VIBRATE_WHEN to the boolean setting stored in NOTIFICATION_VIBRATE.
         SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
-        if (!sharedPreferences.contains(NOTIFICATION_VIBRATE_WHEN) &&
-                sharedPreferences.contains(NOTIFICATION_VIBRATE)) {
-            int stringId = sharedPreferences.getBoolean(NOTIFICATION_VIBRATE, false) ?
-                    R.string.prefDefault_vibrate_true :
-                    R.string.prefDefault_vibrate_false;
-            mVibrateWhenPref.setValue(getString(stringId));
+        if (sharedPreferences.contains(NOTIFICATION_VIBRATE_WHEN)) {
+            String vibrateWhen = sharedPreferences.
+                    getString(MessagingPreferenceActivity.NOTIFICATION_VIBRATE_WHEN, null);
+            boolean vibrate = "always".equals(vibrateWhen);
+            SharedPreferences.Editor prefsEditor = sharedPreferences.edit();
+            prefsEditor.putBoolean(NOTIFICATION_VIBRATE, vibrate);
+            prefsEditor.remove(NOTIFICATION_VIBRATE_WHEN);  // remove obsolete setting
+            prefsEditor.apply();
+            mVibratePref.setChecked(vibrate);
         }
 
         mSmsRecycler = Recycler.getSmsRecycler();
@@ -175,7 +207,15 @@ public class MessagingPreferenceActivity extends PreferenceActivity
         setSmsDisplayLimit();
         setMmsDisplayLimit();
 
-        adjustVibrateSummary(mVibrateWhenPref.getValue());
+        String soundValue = sharedPreferences.getString(NOTIFICATION_RINGTONE, null);
+        setRingtoneSummary(soundValue);
+    }
+
+    private void setRingtoneSummary(String soundValue) {
+        Uri soundUri = TextUtils.isEmpty(soundValue) ? null : Uri.parse(soundValue);
+        Ringtone tone = soundUri != null ? RingtoneManager.getRingtone(this, soundUri) : null;
+        mRingtonePref.setSummary(tone != null ? tone.getTitle(this)
+                : getResources().getString(R.string.silent_ringtone));
     }
 
     private void setEnabledNotificationsPref() {
@@ -244,18 +284,21 @@ public class MessagingPreferenceActivity extends PreferenceActivity
         } else if (preference == mEnableNotificationsPref) {
             // Update the actual "enable notifications" value that is stored in secure settings.
             enableNotifications(mEnableNotificationsPref.isChecked(), this);
+        } else if (preference == mMmsAutoRetrievialPref) {
+            if (mMmsAutoRetrievialPref.isChecked()) {
+                startMmsDownload();
+            }
         }
 
         return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
 
-
-    private void restoreDefaultPreferences() {
-        PreferenceManager.getDefaultSharedPreferences(this)
-                .edit().clear().apply();
-        setPreferenceScreen(null);
-        addPreferencesFromResource(R.xml.preferences);
-        setMessagePreferences();
+    /**
+     * Trigger the TransactionService to download any outstanding messages.
+     */
+    private void startMmsDownload() {
+        startService(new Intent(TransactionService.ACTION_ENABLE_AUTO_RETRIEVE, null, this,
+                TransactionService.class));
     }
 
     NumberPickerDialog.OnNumberSetListener mSmsLimitListener =
@@ -316,33 +359,28 @@ public class MessagingPreferenceActivity extends PreferenceActivity
     }
 
     private void registerListeners() {
-        mVibrateWhenPref.setOnPreferenceChangeListener(this);
+        mRingtonePref.setOnPreferenceChangeListener(this);
     }
 
     public boolean onPreferenceChange(Preference preference, Object newValue) {
         boolean result = false;
-        if (preference == mVibrateWhenPref) {
-            adjustVibrateSummary((String)newValue);
+        if (preference == mRingtonePref) {
+            setRingtoneSummary((String)newValue);
             result = true;
         }
         return result;
     }
 
-    private void adjustVibrateSummary(String value) {
-        int len = mVibrateValues.length;
-        for (int i = 0; i < len; i++) {
-            if (mVibrateValues[i].equals(value)) {
-                mVibrateWhenPref.setSummary(mVibrateEntries[i]);
-                return;
-            }
-        }
-        mVibrateWhenPref.setSummary(null);
-    }
-    
-    public static boolean getFullDateEnabled(Context context) {
+    // For the group mms feature to be enabled, the following must be true:
+    //  1. the feature is enabled in mms_config.xml (currently on by default)
+    //  2. the feature is enabled in the mms settings page
+    //  3. the SIM knows its own phone number
+    public static boolean getIsGroupMmsEnabled(Context context) {
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
-        boolean fullDateEnabled =
-            prefs.getBoolean(MessagingPreferenceActivity.DISPLAY_FULLDATE, false);
-        return fullDateEnabled;
+        boolean groupMmsPrefOn = prefs.getBoolean(
+                MessagingPreferenceActivity.GROUP_MMS_MODE, true);
+        return MmsConfig.getGroupMmsEnabled() &&
+                groupMmsPrefOn &&
+                !TextUtils.isEmpty(MessageUtils.getLocalNumber());
     }
 }

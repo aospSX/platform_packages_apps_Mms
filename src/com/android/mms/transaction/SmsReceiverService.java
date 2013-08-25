@@ -23,13 +23,6 @@ import static android.provider.Telephony.Sms.Intents.SMS_RECEIVED_ACTION;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
 
-import com.android.mms.data.Contact;
-import com.android.mms.ui.ClassZeroActivity;
-import com.android.mms.util.Recycler;
-import com.android.mms.util.SendingProgressTokenManager;
-import com.google.android.mms.MmsException;
-import android.database.sqlite.SqliteWrapper;
-
 import android.app.Activity;
 import android.app.Service;
 import android.content.ContentResolver;
@@ -39,6 +32,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.database.Cursor;
+import android.database.sqlite.SqliteWrapper;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -47,7 +41,6 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.Process;
 import android.provider.Telephony.Sms;
-import android.provider.Telephony.Threads;
 import android.provider.Telephony.Sms.Inbox;
 import android.provider.Telephony.Sms.Intents;
 import android.provider.Telephony.Sms.Outbox;
@@ -59,8 +52,15 @@ import android.util.Log;
 import android.widget.Toast;
 
 import com.android.internal.telephony.TelephonyIntents;
-import com.android.mms.R;
 import com.android.mms.LogTag;
+import com.android.mms.R;
+import com.android.mms.data.Contact;
+import com.android.mms.data.Conversation;
+import com.android.mms.ui.ClassZeroActivity;
+import com.android.mms.util.Recycler;
+import com.android.mms.util.SendingProgressTokenManager;
+import com.android.mms.widget.MmsWidgetProvider;
+import com.google.android.mms.MmsException;
 
 /**
  * This service essentially plays the role of a "worker thread", allowing us to store
@@ -308,7 +308,7 @@ public class SmsReceiverService extends Service {
             }
 
             // Update the notification for failed messages since they may be deleted.
-            MessagingNotification.updateSendFailedNotification(this);
+            MessagingNotification.nonBlockingUpdateSendFailedNotification(this);
         } else if ((mResultCode == SmsManager.RESULT_ERROR_RADIO_OFF) ||
                 (mResultCode == SmsManager.RESULT_ERROR_NO_SERVICE)) {
             if (Log.isLoggable(LogTag.TRANSACTION, Log.VERBOSE)) {
@@ -363,8 +363,10 @@ public class SmsReceiverService extends Service {
         }
 
         if (messageUri != null) {
+            long threadId = MessagingNotification.getSmsThreadId(this, messageUri);
             // Called off of the UI thread so ok to block.
-            MessagingNotification.blockingUpdateNewMessageIndicator(this, true, false);
+            Log.d(TAG, "handleSmsReceived messageUri: " + messageUri + " threadId: " + threadId);
+            MessagingNotification.blockingUpdateNewMessageIndicator(this, threadId, false);
         }
     }
 
@@ -381,7 +383,8 @@ public class SmsReceiverService extends Service {
         sendFirstQueuedMessage();
 
         // Called off of the UI thread so ok to block.
-        MessagingNotification.blockingUpdateNewMessageIndicator(this, true, false);
+        MessagingNotification.blockingUpdateNewMessageIndicator(
+                this, MessagingNotification.THREAD_ALL, false);
     }
 
     /**
@@ -500,7 +503,7 @@ public class SmsReceiverService extends Service {
 
     public static String replaceFormFeeds(String s) {
         // Some providers send formfeeds in their messages. Convert those formfeeds to newlines.
-        return s.replace('\f', '\n');
+        return s == null ? "" : s.replace('\f', '\n');
     }
 
 //    private static int count = 0;
@@ -557,7 +560,7 @@ public class SmsReceiverService extends Service {
         }
 
         if (((threadId == null) || (threadId == 0)) && (address != null)) {
-            threadId = Threads.getOrCreateThreadId(context, address);
+            threadId = Conversation.getOrCreateThreadId(context, address);
             values.put(Sms.THREAD_ID, threadId);
         }
 
@@ -566,7 +569,8 @@ public class SmsReceiverService extends Service {
         Uri insertedUri = SqliteWrapper.insert(context, resolver, Inbox.CONTENT_URI, values);
 
         // Now make sure we're not over the limit in stored messages
-        Recycler.getSmsRecycler().deleteOldMessagesByThreadId(getApplicationContext(), threadId);
+        Recycler.getSmsRecycler().deleteOldMessagesByThreadId(context, threadId);
+        MmsWidgetProvider.notifyDatasetChanged(context);
 
         return insertedUri;
     }
@@ -651,7 +655,6 @@ public class SmsReceiverService extends Service {
             // Allow un-matched register-unregister calls
         }
     }
-
 }
 
 

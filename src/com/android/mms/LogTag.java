@@ -16,10 +16,6 @@
 
 package com.android.mms;
 
-import com.android.mms.data.Contact;
-import com.android.mms.data.Conversation;
-import com.android.mms.data.RecipientIdCache;
-
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
@@ -27,12 +23,26 @@ import android.content.DialogInterface;
 import android.content.DialogInterface.OnClickListener;
 import android.util.Log;
 
+import com.android.mms.data.Contact;
+import com.android.mms.data.Conversation;
+import com.android.mms.data.RecipientIdCache;
+
 public class LogTag {
     public static final String TAG = "Mms";
 
     public static final String TRANSACTION = "Mms:transaction";
     public static final String APP = "Mms:app";
     public static final String THREAD_CACHE = "Mms:threadcache";
+    public static final String THUMBNAIL_CACHE = "Mms:thumbnailcache";
+    public static final String PDU_CACHE = "Mms:pducache";
+    public static final String WIDGET = "Mms:widget";
+    public static final String CONTACT = "Mms:contact";
+
+    /**
+     * Log tag for enabling/disabling StrictMode violation log.
+     * To enable: adb shell setprop log.tag.Mms:strictmode DEBUG
+     */
+    public static final String STRICT_MODE_TAG = "Mms:strictmode";
     public static final boolean VERBOSE = false;
     public static final boolean SEVERE_WARNING = true;                  // Leave this true
     private static final boolean SHOW_SEVERE_WARNING_DIALOG = false;    // Set to false before ship

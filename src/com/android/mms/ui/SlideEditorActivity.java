@@ -17,28 +17,6 @@
 
 package com.android.mms.ui;
 
-import java.io.File;
-
-import com.google.android.mms.ContentType;
-import com.android.mms.ExceedMessageSizeException;
-import com.google.android.mms.MmsException;
-import com.android.mms.MmsApp;
-import com.android.mms.MmsConfig;
-import com.android.mms.R;
-import com.android.mms.ResolutionException;
-import com.android.mms.TempFileProvider;
-import com.android.mms.UnsupportContentTypeException;
-import com.android.mms.model.IModelChangedObserver;
-import com.android.mms.model.LayoutModel;
-import com.android.mms.model.Model;
-import com.android.mms.model.SlideModel;
-import com.android.mms.model.SlideshowModel;
-import com.google.android.mms.pdu.PduBody;
-import com.google.android.mms.pdu.PduPart;
-import com.google.android.mms.pdu.PduPersister;
-import com.android.mms.ui.BasicSlideEditorView.OnTextChangedListener;
-import com.android.mms.ui.MessageUtils.ResizeImageResultCallback;
-
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ContentUris;
@@ -50,9 +28,9 @@ import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
-import android.provider.MediaStore;
 import android.provider.Settings;
-import android.provider.Telephony.Mms;
+import android.text.InputFilter;
+import android.text.InputFilter.LengthFilter;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Menu;
@@ -61,11 +39,29 @@ import android.view.SubMenu;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.Toast;
-import android.text.InputFilter.LengthFilter;
-import android.widget.EditText;
-import android.text.InputFilter;
+
+import com.android.mms.ExceedMessageSizeException;
+import com.android.mms.MmsApp;
+import com.android.mms.MmsConfig;
+import com.android.mms.R;
+import com.android.mms.ResolutionException;
+import com.android.mms.TempFileProvider;
+import com.android.mms.UnsupportContentTypeException;
+import com.android.mms.model.IModelChangedObserver;
+import com.android.mms.model.LayoutModel;
+import com.android.mms.model.Model;
+import com.android.mms.model.SlideModel;
+import com.android.mms.model.SlideshowModel;
+import com.android.mms.ui.BasicSlideEditorView.OnTextChangedListener;
+import com.android.mms.ui.MessageUtils.ResizeImageResultCallback;
+import com.google.android.mms.ContentType;
+import com.google.android.mms.MmsException;
+import com.google.android.mms.pdu.PduBody;
+import com.google.android.mms.pdu.PduPart;
+import com.google.android.mms.pdu.PduPersister;
 
 /**
  * This activity allows user to edit the contents of a slide.
@@ -127,6 +123,7 @@ public class SlideEditorActivity extends Activity {
     private Uri mUri;
 
     private final static String MESSAGE_URI = "message_uri";
+    private AsyncDialog mAsyncDialog;   // Used for background tasks.
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -211,11 +208,16 @@ public class SlideEditorActivity extends Activity {
     protected void onPause()  {
         super.onPause();
 
+        // remove any callback to display a progress spinner
+        if (mAsyncDialog != null) {
+            mAsyncDialog.clearPendingProgressDialog();
+        }
+
         synchronized (this) {
             if (mDirty) {
                 try {
                     PduBody pb = mSlideshowModel.toPduBody();
-                    PduPersister.getPduPersister(this).updateParts(mUri, pb);
+                    PduPersister.getPduPersister(this).updateParts(mUri, pb, null);
                     mSlideshowModel.sync(pb);
                 }  catch (MmsException e) {
                     Log.e(TAG, "Cannot update the message: " + mUri, e);
@@ -318,8 +320,16 @@ public class SlideEditorActivity extends Activity {
         }
     };
 
+    private AsyncDialog getAsyncDialog() {
+        if (mAsyncDialog == null) {
+            mAsyncDialog = new AsyncDialog(this);
+        }
+        return mAsyncDialog;
+    }
+
     private void previewSlideshow() {
-        MessageUtils.viewMmsMessageAttachment(SlideEditorActivity.this, mUri, mSlideshowModel);
+        MessageUtils.viewMmsMessageAttachment(SlideEditorActivity.this, mUri, mSlideshowModel,
+                getAsyncDialog());
     }
 
     private void updateTitle() {
@@ -430,11 +440,7 @@ public class SlideEditorActivity extends Activity {
                 break;
 
             case MENU_TAKE_PICTURE:
-                intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-                // We have to pass a uri to store the picture data, otherwise the camera will return
-                // a very small image bitmap.
-                intent.putExtra(MediaStore.EXTRA_OUTPUT, TempFileProvider.SCRAP_CONTENT_URI);
-                startActivityForResult(intent, REQUEST_CODE_TAKE_PICTURE);
+                MessageUtils.capturePicture(this, REQUEST_CODE_TAKE_PICTURE);
                 break;
 
             case MENU_DEL_PICTURE:
@@ -589,6 +595,9 @@ public class SlideEditorActivity extends Activity {
                     if (pictureUri == null) {
                         showError = true;
                     } else {
+                        // Remove the old captured picture's thumbnail from the cache
+                        MmsApp.getApplication().getThumbnailManager().removeThumbnail(pictureUri);
+
                         mSlideshowEditor.changeImage(mPosition, pictureUri);
                         setReplaceButtonText(R.string.replace_image);
                     }
@@ -730,7 +739,7 @@ public class SlideEditorActivity extends Activity {
             try {
                 long messageId = ContentUris.parseId(mUri);
                 PduPersister persister = PduPersister.getPduPersister(context);
-                Uri newUri = persister.persistPart(part, messageId);
+                Uri newUri = persister.persistPart(part, messageId, null);
                 mSlideshowEditor.changeImage(mPosition, newUri);
 
                 setReplaceButtonText(R.string.replace_image);
@@ -785,7 +794,7 @@ public class SlideEditorActivity extends Activity {
 
     private void showCurrentSlide() {
         mPresenter.setLocation(mPosition);
-        mPresenter.present();
+        mPresenter.present(null);
         updateTitle();
 
         if (mSlideshowModel.get(mPosition).hasImage()) {

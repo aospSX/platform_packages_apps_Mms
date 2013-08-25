@@ -17,18 +17,16 @@
 
 package com.android.mms.transaction;
 
-import android.database.sqlite.SqliteWrapper;
-
 import android.content.Context;
 import android.database.Cursor;
-import android.net.Uri;
-import com.android.internal.telephony.Phone;
-import com.android.mms.LogTag;
-
+import android.database.sqlite.SqliteWrapper;
 import android.net.NetworkUtils;
 import android.provider.Telephony;
 import android.text.TextUtils;
 import android.util.Log;
+
+import com.android.internal.telephony.PhoneConstants;
+import com.android.mms.LogTag;
 
 /**
  * Container of transaction settings. Instances of this class are contained
@@ -61,12 +59,19 @@ public class TransactionSettings {
      * @param context The context of the MMS Client
      */
     public TransactionSettings(Context context, String apnName) {
-        String selection = TextUtils.isEmpty(apnName) ? null :
-                Telephony.Carriers.APN + "='" + apnName.trim() + "'";
+        if (Log.isLoggable(LogTag.TRANSACTION, Log.VERBOSE)) {
+            Log.v(TAG, "TransactionSettings: apnName: " + apnName);
+        }
+        String selection = Telephony.Carriers.CURRENT + " IS NOT NULL";
+        String[] selectionArgs = null;
+        if (!TextUtils.isEmpty(apnName)) {
+            selection += " AND " + Telephony.Carriers.APN + "=?";
+            selectionArgs = new String[]{ apnName.trim() };
+        }
 
         Cursor cursor = SqliteWrapper.query(context, context.getContentResolver(),
-                            Uri.withAppendedPath(Telephony.Carriers.CONTENT_URI, "current"),
-                            APN_PROJECTION, selection, null, null);
+                            Telephony.Carriers.CONTENT_URI,
+                            APN_PROJECTION, selection, selectionArgs, null);
 
         if (Log.isLoggable(LogTag.TRANSACTION, Log.VERBOSE)) {
             Log.v(TAG, "TransactionSettings looking for apn: " + selection + " returned: " +
@@ -82,15 +87,10 @@ public class TransactionSettings {
         try {
             while (cursor.moveToNext() && TextUtils.isEmpty(mServiceCenter)) {
                 // Read values from APN settings
-                if (isValidApnType(cursor.getString(COLUMN_TYPE), Phone.APN_TYPE_MMS)) {
+                if (isValidApnType(cursor.getString(COLUMN_TYPE), PhoneConstants.APN_TYPE_MMS)) {
                     sawValidApn = true;
-
-                    String MMSC = cursor.getString(COLUMN_MMSC);
-                    if (MMSC == null) {
-                        continue;
-                    }
-
-                    mServiceCenter = NetworkUtils.trimV4AddrZeros(MMSC.trim());
+                    mServiceCenter = NetworkUtils.trimV4AddrZeros(
+                            cursor.getString(COLUMN_MMSC).trim());
                     mProxyAddress = NetworkUtils.trimV4AddrZeros(
                             cursor.getString(COLUMN_MMSPROXY));
                     if (isProxySet()) {
@@ -162,7 +162,7 @@ public class TransactionSettings {
         }
 
         for (String t : types.split(",")) {
-            if (t.equals(requestType) || t.equals(Phone.APN_TYPE_ALL)) {
+            if (t.equals(requestType) || t.equals(PhoneConstants.APN_TYPE_ALL)) {
                 return true;
             }
         }

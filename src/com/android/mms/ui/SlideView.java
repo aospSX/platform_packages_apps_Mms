@@ -17,8 +17,10 @@
 
 package com.android.mms.ui;
 
-import com.android.mms.R;
-import com.android.mms.layout.LayoutManager;
+import java.io.IOException;
+import java.util.Comparator;
+import java.util.Map;
+import java.util.TreeMap;
 
 import android.content.Context;
 import android.graphics.Bitmap;
@@ -40,10 +42,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.VideoView;
 
-import java.io.IOException;
-import java.util.Comparator;
-import java.util.Map;
-import java.util.TreeMap;
+import com.android.mms.R;
+import com.android.mms.layout.LayoutManager;
 
 /**
  * A basic view to show the contents of a slide.
@@ -108,7 +108,7 @@ public class SlideView extends AbsoluteLayout implements
             mImageView = new ImageView(mContext);
             mImageView.setPadding(0, 5, 0, 5);
             addView(mImageView, new LayoutParams(
-                    LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, 0, 0));
+                    LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, 0, 0));
             if (DEBUG) {
                 mImageView.setBackgroundColor(0xFFFF0000);
             }
@@ -481,7 +481,7 @@ public class SlideView extends AbsoluteLayout implements
                     }
                 }
             };
-            mScrollViewPort.setScrollBarStyle(SCROLLBARS_OUTSIDE_INSET);
+            mScrollViewPort.setScrollBarStyle(SCROLLBARS_INSIDE_OVERLAY);
             mViewPort = new LinearLayout(mContext);
             mViewPort.setOrientation(LinearLayout.VERTICAL);
             mViewPort.setGravity(Gravity.CENTER);
@@ -542,5 +542,8 @@ public class SlideView extends AbsoluteLayout implements
             }
             view.setVisibility(View.GONE);
         }
+    }
+
+    public void setVideoThumbnail(String name, Bitmap bitmap) {
     }
 }

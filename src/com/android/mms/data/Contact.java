@@ -13,6 +13,7 @@ import android.content.ContentUris;
 import android.content.Context;
 import android.database.ContentObserver;
 import android.database.Cursor;
+import android.database.sqlite.SqliteWrapper;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
@@ -20,22 +21,21 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Parcelable;
+import android.provider.ContactsContract.CommonDataKinds.Email;
+import android.provider.ContactsContract.CommonDataKinds.Phone;
 import android.provider.ContactsContract.Contacts;
 import android.provider.ContactsContract.Data;
 import android.provider.ContactsContract.Presence;
-import android.provider.ContactsContract.CommonDataKinds.Email;
-import android.provider.ContactsContract.CommonDataKinds.Phone;
 import android.provider.ContactsContract.Profile;
 import android.provider.Telephony.Mms;
 import android.telephony.PhoneNumberUtils;
 import android.text.TextUtils;
 import android.util.Log;
 
-import android.database.sqlite.SqliteWrapper;
-import com.android.mms.ui.MessageUtils;
 import com.android.mms.LogTag;
 import com.android.mms.MmsApp;
 import com.android.mms.R;
+import com.android.mms.ui.MessageUtils;
 
 public class Contact {
     public static final int CONTACT_METHOD_TYPE_UNKNOWN = 0;
@@ -46,19 +46,18 @@ public class Contact {
     public static final String CONTENT_SCHEME = "content";
     private static final int CONTACT_METHOD_ID_UNKNOWN = -1;
     private static final String TAG = "Contact";
-    private static final boolean V = false;
     private static ContactsCache sContactCache;
     private static final String SELF_ITEM_KEY = "Self_Item_Key";
 
-    private static final ContentObserver sContactsObserver = new ContentObserver(new Handler()) {
-        @Override
-        public void onChange(boolean selfUpdate) {
-            if (Log.isLoggable(LogTag.APP, Log.VERBOSE)) {
-                log("contact changed, invalidate cache");
-            }
-            invalidateCache();
-        }
-    };
+//    private static final ContentObserver sContactsObserver = new ContentObserver(new Handler()) {
+//        @Override
+//        public void onChange(boolean selfUpdate) {
+//            if (Log.isLoggable(LogTag.APP, Log.VERBOSE)) {
+//                log("contact changed, invalidate cache");
+//            }
+//            invalidateCache();
+//        }
+//    };
 
     private static final ContentObserver sPresenceObserver = new ContentObserver(new Handler()) {
         @Override
@@ -135,7 +134,7 @@ public class Contact {
                 mContactMethodId);
     }
 
-    private static void logWithTrace(String msg, Object... format) {
+    public static void logWithTrace(String tag, String msg, Object... format) {
         Thread current = Thread.currentThread();
         StackTraceElement[] stack = current.getStackTrace();
 
@@ -155,7 +154,7 @@ public class Contact {
             }
         }
 
-        Log.d(TAG, sb.toString());
+        Log.d(tag, sb.toString());
     }
 
     public static Contact get(String number, boolean canBlock) {
@@ -364,8 +363,10 @@ public class Contact {
         // cache each time that occurs. Unless we can get targeted updates for the contacts we
         // care about(which probably won't happen for a long time), we probably should just
         // invalidate cache peoridically, or surgically.
+        /*
         context.getContentResolver().registerContentObserver(
                 Contacts.CONTENT_URI, true, sContactsObserver);
+        */
     }
 
     public static void dump() {
@@ -493,6 +494,7 @@ public class Contact {
             public TaskStack() {
                 mThingsToLoad = new ArrayList<Runnable>();
                 mWorkerThread = new Thread(new Runnable() {
+                    @Override
                     public void run() {
                         while (true) {
                             Runnable r = null;
@@ -513,7 +515,8 @@ public class Contact {
                             }
                         }
                     }
-                });
+                }, "Contact.ContactsCache.TaskStack worker thread");
+                mWorkerThread.setPriority(Thread.MIN_PRIORITY);
                 mWorkerThread.start();
             }
 
@@ -538,7 +541,9 @@ public class Contact {
         }
 
         private Contact get(String number, boolean isMe, boolean canBlock) {
-            if (V) logWithTrace("get(%s, %s, %s)", number, isMe, canBlock);
+            if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
+                logWithTrace(TAG, "get(%s, %s, %s)", number, isMe, canBlock);
+            }
 
             if (TextUtils.isEmpty(number)) {
                 number = "";        // In some places (such as Korea), it's possible to receive
@@ -575,6 +580,7 @@ public class Contact {
 
                     final Contact c = contact;
                     r = new Runnable() {
+                        @Override
                         public void run() {
                             updateContact(c);
                         }
@@ -667,12 +673,16 @@ public class Contact {
             }
 
             if (orig.mPersonId != newContactData.mPersonId) {
-                if (V) Log.d(TAG, "person id changed");
+                if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
+                    Log.d(TAG, "person id changed");
+                }
                 return true;
             }
 
             if (orig.mPresenceResId != newContactData.mPresenceResId) {
-                if (V) Log.d(TAG, "presence changed");
+                if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
+                    Log.d(TAG, "presence changed");
+                }
                 return true;
             }
 
@@ -683,19 +693,25 @@ public class Contact {
             String oldName = emptyIfNull(orig.mName);
             String newName = emptyIfNull(newContactData.mName);
             if (!oldName.equals(newName)) {
-                if (V) Log.d(TAG, String.format("name changed: %s -> %s", oldName, newName));
+                if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
+                    Log.d(TAG, String.format("name changed: %s -> %s", oldName, newName));
+                }
                 return true;
             }
 
             String oldLabel = emptyIfNull(orig.mLabel);
             String newLabel = emptyIfNull(newContactData.mLabel);
             if (!oldLabel.equals(newLabel)) {
-                if (V) Log.d(TAG, String.format("label changed: %s -> %s", oldLabel, newLabel));
+                if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
+                    Log.d(TAG, String.format("label changed: %s -> %s", oldLabel, newLabel));
+                }
                 return true;
             }
 
             if (!Arrays.equals(orig.mAvatarData, newContactData.mAvatarData)) {
-                if (V) Log.d(TAG, "avatar changed");
+                if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
+                    Log.d(TAG, "avatar changed");
+                }
                 return true;
             }
 
@@ -744,7 +760,9 @@ public class Contact {
                             iterator = (HashSet<UpdateListener>)Contact.mListeners.clone();
                         }
                         for (UpdateListener l : iterator) {
-                            if (V) Log.d(TAG, "updating " + l);
+                            if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
+                                Log.d(TAG, "updating " + l);
+                            }
                             l.onUpdate(c);
                         }
                     }
@@ -813,7 +831,9 @@ public class Contact {
             Contact entry = new Contact(number);
             entry.mContactMethodType = CONTACT_METHOD_TYPE_PHONE;
 
-            //if (LOCAL_DEBUG) log("queryContactInfoByNumber: number=" + number);
+            if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
+                log("queryContactInfoByNumber: number=" + number);
+            }
 
             String normalizedNumber = PhoneNumberUtils.normalizeNumber(number);
             String minMatch = PhoneNumberUtils.toCallerIDMinMatch(normalizedNumber);
@@ -858,7 +878,9 @@ public class Contact {
             Contact entry = new Contact(true);
             entry.mContactMethodType = CONTACT_METHOD_TYPE_SELF;
 
-            //if (LOCAL_DEBUG) log("getContactInfoForSelf: number=" + number);
+            if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
+                log("getContactInfoForSelf");
+            }
             Cursor cursor = mContext.getContentResolver().query(
                     Profile.CONTENT_URI, SELF_PROJECTION, null, null, null);
             if (cursor == null) {
@@ -889,7 +911,7 @@ public class Contact {
                 contact.mPresenceText = cursor.getString(CONTACT_STATUS_COLUMN);
                 contact.mNumberE164 = cursor.getString(PHONE_NORMALIZED_NUMBER);
                 contact.mSendToVoicemail = cursor.getInt(SEND_TO_VOICEMAIL) == 1;
-                if (V) {
+                if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
                     log("fillPhoneTypeContact: name=" + contact.mName + ", number="
                             + contact.mNumber + ", presence=" + contact.mPresenceResId
                             + " SendToVoicemail: " + contact.mSendToVoicemail);
@@ -908,7 +930,7 @@ public class Contact {
                 if (TextUtils.isEmpty(contact.mName)) {
                     contact.mName = mContext.getString(R.string.messagelist_sender_self);
                 }
-                if (V) {
+                if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
                     log("fillSelfContact: name=" + contact.mName + ", number="
                             + contact.mNumber);
                 }
@@ -933,7 +955,7 @@ public class Contact {
                 return null;
             }
 
-            if (V) {
+            if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
                 log("loadAvatarData: name=" + entry.mName + ", number=" + entry.mNumber);
             }
 
@@ -992,16 +1014,13 @@ public class Contact {
                 try {
                     while (cursor.moveToNext()) {
                         boolean found = false;
-                        entry.mContactMethodId = cursor.getLong(EMAIL_ID_COLUMN);
-                        entry.mPresenceResId = getPresenceIconResourceId(
-                                cursor.getInt(EMAIL_STATUS_COLUMN));
-                        entry.mPersonId = cursor.getLong(EMAIL_CONTACT_ID_COLUMN);
-                        entry.mSendToVoicemail = cursor.getInt(EMAIL_SEND_TO_VOICEMAIL_COLUMN) == 1;
-
                         synchronized (entry) {
+                            entry.mContactMethodId = cursor.getLong(EMAIL_ID_COLUMN);
                             entry.mPresenceResId = getPresenceIconResourceId(
                                     cursor.getInt(EMAIL_STATUS_COLUMN));
                             entry.mPersonId = cursor.getLong(EMAIL_CONTACT_ID_COLUMN);
+                            entry.mSendToVoicemail =
+                                    cursor.getInt(EMAIL_SEND_TO_VOICEMAIL_COLUMN) == 1;
 
                             String name = cursor.getString(EMAIL_NAME_COLUMN);
                             if (TextUtils.isEmpty(name)) {
@@ -1009,7 +1028,7 @@ public class Contact {
                             }
                             if (!TextUtils.isEmpty(name)) {
                                 entry.mName = name;
-                                if (V) {
+                                if (Log.isLoggable(LogTag.CONTACT, Log.DEBUG)) {
                                     log("getContactInfoForEmailAddress: name=" + entry.mName +
                                             ", email=" + email + ", presence=" +
                                             entry.mPresenceResId);

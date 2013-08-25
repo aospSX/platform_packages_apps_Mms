@@ -40,12 +40,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.INSTALL_DRM" />
-    <!-- Grant permission to system apps to access receiver -->
-    <permission android:name="android.permission.MMS_PUSH"
-                android:protectionLevel="signatureOrSystem"
-                android:label="@string/label_mms_push"
-                android:description="@string/desc_mms_push"/>
-    <uses-permission android:name="android.permission.MMS_PUSH"/>
+    <uses-permission android:name="android.permission.WRITE_APN_SETTINGS" />
+
     <application android:name="MmsApp"
             android:label="@string/app_label"
             android:icon="@mipmap/ic_launcher_smsmms"
@@ -53,10 +49,10 @@
             android:allowTaskReparenting="true">
 
         <service android:name=".transaction.TransactionService"
-                 android:exported="true" />
+                 android:exported="false" />
 
         <service android:name=".transaction.SmsReceiverService"
-                 android:exported="true" />
+                 android:exported="false" />
 
         <activity android:name=".ui.ConversationList"
                   android:label="@string/app_label"
@@ -84,8 +80,9 @@
 
         <activity android:name=".ui.ComposeMessageActivity"
                   android:configChanges="orientation|screenSize|keyboardHidden"
-                  android:windowSoftInputMode="stateHidden"
+                  android:windowSoftInputMode="stateHidden|adjustResize"
                   android:theme="@style/MmsHoloTheme"
+                  android:parentActivityName=".ui.ConversationList"
                   android:launchMode="singleTop" >
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -116,18 +113,12 @@
            <intent-filter>
                <action android:name="android.intent.action.SEND" />
                <category android:name="android.intent.category.DEFAULT" />
-               <data android:mimeType="video/*" />
-           </intent-filter>
-           <intent-filter>
-               <action android:name="android.intent.action.SEND" />
-               <category android:name="android.intent.category.DEFAULT" />
                <data android:mimeType="text/plain" />
            </intent-filter>
            <intent-filter>
                <action android:name="android.intent.action.SEND_MULTIPLE" />
                <category android:name="android.intent.category.DEFAULT" />
                <data android:mimeType="image/*" />
-               <data android:mimeType="video/*" />
            </intent-filter>
         </activity>
 
@@ -137,6 +128,14 @@
                   android:windowSoftInputMode="stateHidden"
                   android:theme="@style/MmsHoloTheme" >
         </activity-alias>
+
+        <activity android:name=".ui.ComposeMessageActivityNoLockScreen"
+                  android:configChanges="orientation|screenSize|keyboardHidden"
+                  android:windowSoftInputMode="stateHidden"
+                  android:theme="@style/MmsHoloTheme"
+                  android:exported="false"
+                  android:launchMode="singleTop" >
+        </activity>
 
         <activity android:name=".ui.DeliveryReportActivity"
             android:label="@string/delivery_report_activity"
@@ -157,6 +156,10 @@
         <activity android:name=".ui.SlideshowEditActivity"
             android:theme="@style/MmsHoloTheme"
             android:label="@string/edit_slideshow_activity" />
+
+        <activity android:name=".ui.RecipientListActivity"
+            android:theme="@style/MmsHoloTheme"
+            android:label="@string/recipient_list_activity" />
 
         <activity android:name=".ui.SlideEditorActivity"
             android:windowSoftInputMode="adjustResize"
@@ -198,16 +201,10 @@
             </intent-filter>
         </receiver>
 
-        <receiver android:name=".transaction.MmsSystemPushMsgReceiver"
-                  android:permission="android.permission.MMS_PUSH">
-                  <intent-filter>
-                      <action android:name="android.intent.action.MMS_PUSH" />
-                  </intent-filter>
-	</receiver>
-
         <activity android:name=".ui.ManageSimMessages"
                   android:theme="@style/MmsHoloTheme"
                   android:launchMode="singleTop"
+                  android:configChanges="orientation|screenSize|keyboardHidden"
                   android:label="@string/sim_manage_messages_title">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -242,6 +239,8 @@
                 <action android:name="com.android.mms.transaction.MessageStatusReceiver.MESSAGE_STATUS_RECEIVED" />
             </intent-filter>
         </receiver>
+
+        <service android:name=".transaction.MessageStatusService"/>
 
         <receiver android:name=".transaction.SimFullReceiver">
             <intent-filter>
@@ -280,6 +279,7 @@
 
         <!-- Search Suggestions Provider -->
         <provider android:name="SuggestionsProvider"
+            android:exported="true"
             android:readPermission="android.permission.READ_SMS"
             android:authorities="com.android.mms.SuggestionsProvider" >
             <path-permission
@@ -302,6 +302,7 @@
         </service>
 
         <provider android:name="TempFileProvider"
+                  android:exported="true"
                   android:authorities="mms_temp_file"
                   android:multiprocess="true" />
 
@@ -311,6 +312,22 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Widget -->
+        <receiver android:name=".widget.MmsWidgetProvider"  android:label="@string/app_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.android.mms.intent.action.ACTION_NOTIFY_DATASET_CHANGED" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider"
+                       android:resource="@xml/widget_info" />
+        </receiver>
+        <service android:name=".widget.MmsWidgetService"
+                 android:permission="android.permission.BIND_REMOTEVIEWS"
+                 android:exported="false" />
+
 
     </application>
 </manifest>

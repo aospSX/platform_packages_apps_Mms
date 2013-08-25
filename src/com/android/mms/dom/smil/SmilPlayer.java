@@ -17,6 +17,11 @@
 
 package com.android.mms.dom.smil;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+
 import org.w3c.dom.NodeList;
 import org.w3c.dom.events.DocumentEvent;
 import org.w3c.dom.events.Event;
@@ -28,11 +33,6 @@ import org.w3c.dom.smil.Time;
 import org.w3c.dom.smil.TimeList;
 
 import android.util.Log;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashSet;
 
 /**
  * The SmilPlayer is responsible for playing, stopping, pausing and resuming a SMIL tree.
@@ -308,7 +308,7 @@ public class SmilPlayer implements Runnable {
             mCurrentTime = 0;
             mCurrentElement = 0;
             mCurrentSlide = 0;
-            mPlayerThread = new Thread(this);
+            mPlayerThread = new Thread(this, "SmilPlayer thread");
             mState = SmilPlayerState.PLAYING;
             mPlayerThread.start();
         } else {

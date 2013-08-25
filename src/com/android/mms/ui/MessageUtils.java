@@ -17,10 +17,44 @@
 
 package com.android.mms.ui;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.ContentUris;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.content.DialogInterface.OnCancelListener;
+import android.content.DialogInterface.OnClickListener;
+import android.content.Intent;
+import android.content.res.Resources;
+import android.database.Cursor;
+import android.database.sqlite.SqliteWrapper;
+import android.media.CamcorderProfile;
+import android.media.RingtoneManager;
+import android.net.Uri;
+import android.os.Environment;
+import android.os.Handler;
+import android.provider.MediaStore;
+import android.provider.Telephony.Mms;
+import android.provider.Telephony.Sms;
+import android.telephony.PhoneNumberUtils;
+import android.text.TextUtils;
+import android.text.format.DateUtils;
+import android.text.format.Time;
+import android.text.style.URLSpan;
+import android.util.Log;
+import android.widget.Toast;
+
+import com.android.mms.LogTag;
 import com.android.mms.MmsApp;
 import com.android.mms.MmsConfig;
 import com.android.mms.R;
-import com.android.mms.LogTag;
 import com.android.mms.TempFileProvider;
 import com.android.mms.data.WorkingMessage;
 import com.android.mms.model.MediaModel;
@@ -40,40 +74,6 @@ import com.google.android.mms.pdu.PduPart;
 import com.google.android.mms.pdu.PduPersister;
 import com.google.android.mms.pdu.RetrieveConf;
 import com.google.android.mms.pdu.SendReq;
-import android.database.sqlite.SqliteWrapper;
-
-import android.app.Activity;
-import android.app.AlertDialog;
-import android.content.ContentUris;
-import android.content.Context;
-import android.content.DialogInterface;
-import android.content.Intent;
-import android.content.DialogInterface.OnCancelListener;
-import android.content.DialogInterface.OnClickListener;
-import android.content.res.Resources;
-import android.database.Cursor;
-import android.media.CamcorderProfile;
-import android.media.RingtoneManager;
-import android.net.Uri;
-import android.os.Environment;
-import android.os.Handler;
-import android.provider.MediaStore;
-import android.provider.Telephony.Mms;
-import android.provider.Telephony.Sms;
-import android.telephony.PhoneNumberUtils;
-import android.text.TextUtils;
-import android.text.format.DateUtils;
-import android.text.format.Time;
-import android.text.style.URLSpan;
-import android.util.Log;
-import android.widget.Toast;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * An utility class for managing messages.
@@ -85,6 +85,7 @@ public class MessageUtils {
 
     private static final String TAG = LogTag.TAG;
     private static String sLocalNumber;
+    private static String[] sNoSubjectStrings;
 
     // Cache of both groups of space-separated ids to their full
     // comma-separated display names, as well as individual ids to
@@ -96,6 +97,9 @@ public class MessageUtils {
     private static final Map<String, String> sRecipientAddress =
             new ConcurrentHashMap<String, String>(20 /* initial capacity */);
 
+    // When we pass a video record duration to the video recorder, use one of these values.
+    private static final int[] sVideoDuration =
+            new int[] {0, 5, 10, 15, 20, 30, 40, 50, 60, 90, 120};
 
     /**
      * MMS address parsing data structures
@@ -116,6 +120,31 @@ public class MessageUtils {
 
     private MessageUtils() {
         // Forbidden being instantiated.
+    }
+
+    /**
+     * cleanseMmsSubject will take a subject that's says, "<Subject: no subject>", and return
+     * a null string. Otherwise it will return the original subject string.
+     * @param context a regular context so the function can grab string resources
+     * @param subject the raw subject
+     * @return
+     */
+    public static String cleanseMmsSubject(Context context, String subject) {
+        if (TextUtils.isEmpty(subject)) {
+            return subject;
+        }
+        if (sNoSubjectStrings == null) {
+            sNoSubjectStrings =
+                    context.getResources().getStringArray(R.array.empty_subject_strings);
+
+        }
+        final int len = sNoSubjectStrings.length;
+        for (int i = 0; i < len; i++) {
+            if (subject.equalsIgnoreCase(sNoSubjectStrings[i])) {
+                return null;
+            }
+        }
+        return subject;
     }
 
     public static String getMessageDetails(Context context, Cursor cursor, int size) {
@@ -337,6 +366,18 @@ public class MessageUtils {
         long date = cursor.getLong(MessageListAdapter.COLUMN_SMS_DATE);
         details.append(MessageUtils.formatTimeStampString(context, date, true));
 
+        // Delivered: ***
+        if (smsType == Sms.MESSAGE_TYPE_SENT) {
+            // For sent messages with delivery reports, we stick the delivery time in the
+            // date_sent column (see MessageStatusReceiver).
+            long dateDelivered = cursor.getLong(MessageListAdapter.COLUMN_SMS_DATE_SENT);
+            if (dateDelivered > 0) {
+                details.append('\n');
+                details.append(res.getString(R.string.delivered_label));
+                details.append(MessageUtils.formatTimeStampString(context, dateDelivered, true));
+            }
+        }
+
         // Error code: ***
         int errorCode = cursor.getInt(MessageListAdapter.COLUMN_SMS_ERROR_CODE);
         if (errorCode != 0) {
@@ -363,7 +404,7 @@ public class MessageUtils {
 
     public static int getAttachmentType(SlideshowModel model) {
         if (model == null) {
-            return WorkingMessage.TEXT;
+            return MessageItem.ATTACHMENT_TYPE_NOT_LOADED;
         }
 
         int numberOfSlides = model.size();
@@ -393,7 +434,7 @@ public class MessageUtils {
             }
         }
 
-        return WorkingMessage.TEXT;
+        return MessageItem.ATTACHMENT_TYPE_NOT_LOADED;
     }
 
     public static String formatTimeStampString(Context context, long when) {
@@ -432,46 +473,67 @@ public class MessageUtils {
         return DateUtils.formatDateTime(context, when, format_flags);
     }
 
-    public static void selectAudio(Context context, int requestCode) {
-        if (context instanceof Activity) {
-            Intent intent = new Intent(RingtoneManager.ACTION_RINGTONE_PICKER);
-            intent.putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, false);
-            intent.putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false);
-            intent.putExtra(RingtoneManager.EXTRA_RINGTONE_INCLUDE_DRM, false);
-            intent.putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE,
-                    context.getString(R.string.select_audio));
-            ((Activity) context).startActivityForResult(intent, requestCode);
-        }
+    public static void selectAudio(Activity activity, int requestCode) {
+        Intent intent = new Intent(RingtoneManager.ACTION_RINGTONE_PICKER);
+        intent.putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, false);
+        intent.putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false);
+        intent.putExtra(RingtoneManager.EXTRA_RINGTONE_INCLUDE_DRM, false);
+        intent.putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE,
+                activity.getString(R.string.select_audio));
+        activity.startActivityForResult(intent, requestCode);
     }
 
-    public static void recordSound(Context context, int requestCode, long sizeLimit) {
-        if (context instanceof Activity) {
-            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-            intent.setType(ContentType.AUDIO_AMR);
-            intent.setClassName("com.android.soundrecorder",
-                    "com.android.soundrecorder.SoundRecorder");
-            intent.putExtra(android.provider.MediaStore.Audio.Media.EXTRA_MAX_BYTES, sizeLimit);
-
-            ((Activity) context).startActivityForResult(intent, requestCode);
-        }
+    public static void recordSound(Activity activity, int requestCode, long sizeLimit) {
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.setType(ContentType.AUDIO_AMR);
+        intent.setClassName("com.android.soundrecorder",
+                "com.android.soundrecorder.SoundRecorder");
+        intent.putExtra(android.provider.MediaStore.Audio.Media.EXTRA_MAX_BYTES, sizeLimit);
+        activity.startActivityForResult(intent, requestCode);
     }
 
-    public static void recordVideo(Context context, int requestCode, long sizeLimit) {
-        if (context instanceof Activity) {
-            int durationLimit = getVideoCaptureDurationLimit();
-            Intent intent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
-            intent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 0);
-            intent.putExtra("android.intent.extra.sizeLimit", sizeLimit);
-            intent.putExtra("android.intent.extra.durationLimit", durationLimit);
-            intent.putExtra(MediaStore.EXTRA_OUTPUT, TempFileProvider.SCRAP_CONTENT_URI);
+    public static void recordVideo(Activity activity, int requestCode, long sizeLimit) {
+        // The video recorder can sometimes return a file that's larger than the max we
+        // say we can handle. Try to handle that overshoot by specifying an 85% limit.
+        sizeLimit *= .85F;
 
-            ((Activity) context).startActivityForResult(intent, requestCode);
+        int durationLimit = getVideoCaptureDurationLimit(sizeLimit);
+
+        if (Log.isLoggable(LogTag.APP, Log.VERBOSE)) {
+            log("recordVideo: durationLimit: " + durationLimit +
+                    " sizeLimit: " + sizeLimit);
         }
+
+        Intent intent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+        intent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 0);
+        intent.putExtra("android.intent.extra.sizeLimit", sizeLimit);
+        intent.putExtra("android.intent.extra.durationLimit", durationLimit);
+        intent.putExtra(MediaStore.EXTRA_OUTPUT, TempFileProvider.SCRAP_CONTENT_URI);
+        activity.startActivityForResult(intent, requestCode);
     }
 
-    private static int getVideoCaptureDurationLimit() {
+    public static void capturePicture(Activity activity, int requestCode) {
+        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        intent.putExtra(MediaStore.EXTRA_OUTPUT, TempFileProvider.SCRAP_CONTENT_URI);
+        activity.startActivityForResult(intent, requestCode);
+    }
+
+    // Public for until tests
+    public static int getVideoCaptureDurationLimit(long bytesAvailable) {
         CamcorderProfile camcorder = CamcorderProfile.get(CamcorderProfile.QUALITY_LOW);
-        return camcorder == null ? 0 : camcorder.duration;
+        if (camcorder == null) {
+            return 0;
+        }
+        bytesAvailable *= 8;        // convert to bits
+        long seconds = bytesAvailable / (camcorder.audioBitRate + camcorder.videoBitRate);
+
+        // Find the best match for one of the fixed durations
+        for (int i = sVideoDuration.length - 1; i >= 0; i--) {
+            if (seconds >= sVideoDuration[i]) {
+                return sVideoDuration[i];
+            }
+        }
+        return 0;
     }
 
     public static void selectVideo(Context context, int requestCode) {
@@ -517,18 +579,17 @@ public class MessageUtils {
         intent.putExtra("SingleItemOnly", true); // So we don't see "surrounding" images in Gallery
 
         String contentType;
-        if (mm.isDrmProtected()) {
-            contentType = mm.getDrmObject().getContentType();
-        } else {
-            contentType = mm.getContentType();
-        }
+        contentType = mm.getContentType();
         intent.setDataAndType(mm.getUri(), contentType);
         context.startActivity(intent);
     }
 
-    public static void showErrorDialog(Context context,
+    public static void showErrorDialog(Activity activity,
             String title, String message) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        if (activity.isFinishing()) {
+            return;
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(activity);
 
         builder.setIcon(R.drawable.ic_sms_mms_not_delivered);
         builder.setTitle(title);
@@ -611,14 +672,12 @@ public class MessageUtils {
                     }
                 });
             }
-        }).start();
+        }, "MessageUtils.resizeImageAsync").start();
     }
 
     public static void showDiscardDraftConfirmDialog(Context context,
             OnClickListener listener) {
         new AlertDialog.Builder(context)
-                .setIconAttribute(android.R.attr.alertDialogIcon)
-                .setTitle(R.string.discard_message)
                 .setMessage(R.string.discard_message_reason)
                 .setPositiveButton(R.string.yes, listener)
                 .setNegativeButton(R.string.no, null)
@@ -792,63 +851,65 @@ public class MessageUtils {
      *       This is hacky though since we will do saveDraft twice and slow down the UI.
      *       We should pass the slideshow in intent extra to the view activity instead of
      *       asking it to read attachments from database.
-     * @param context
+     * @param activity
      * @param msgUri the MMS message URI in database
      * @param slideshow the slideshow to save
      * @param persister the PDU persister for updating the database
      * @param sendReq the SendReq for updating the database
      */
-    public static void viewMmsMessageAttachment(Context context, Uri msgUri,
-            SlideshowModel slideshow) {
-        viewMmsMessageAttachment(context, msgUri, slideshow, 0);
+    public static void viewMmsMessageAttachment(Activity activity, Uri msgUri,
+            SlideshowModel slideshow, AsyncDialog asyncDialog) {
+        viewMmsMessageAttachment(activity, msgUri, slideshow, 0, asyncDialog);
     }
 
-    private static void viewMmsMessageAttachment(Context context, Uri msgUri,
-            SlideshowModel slideshow, int requestCode) {
+    public static void viewMmsMessageAttachment(final Activity activity, final Uri msgUri,
+            final SlideshowModel slideshow, final int requestCode, AsyncDialog asyncDialog) {
         boolean isSimple = (slideshow == null) ? false : slideshow.isSimple();
         if (isSimple) {
             // In attachment-editor mode, we only ever have one slide.
-            MessageUtils.viewSimpleSlideshow(context, slideshow);
+            MessageUtils.viewSimpleSlideshow(activity, slideshow);
         } else {
-            // If a slideshow was provided, save it to disk first.
-            if (slideshow != null) {
-                PduPersister persister = PduPersister.getPduPersister(context);
-                try {
-                    PduBody pb = slideshow.toPduBody();
-                    persister.updateParts(msgUri, pb);
-                    slideshow.sync(pb);
-                } catch (MmsException e) {
-                    Log.e(TAG, "Unable to save message for preview");
-                    return;
+            // The user wants to view the slideshow. We have to persist the slideshow parts
+            // in a background task. If the task takes longer than a half second, a progress dialog
+            // is displayed. Once the PDU persisting is done, another runnable on the UI thread get
+            // executed to start the SlideshowActivity.
+            asyncDialog.runAsync(new Runnable() {
+                @Override
+                public void run() {
+                    // If a slideshow was provided, save it to disk first.
+                    if (slideshow != null) {
+                        PduPersister persister = PduPersister.getPduPersister(activity);
+                        try {
+                            PduBody pb = slideshow.toPduBody();
+                            persister.updateParts(msgUri, pb, null);
+                            slideshow.sync(pb);
+                        } catch (MmsException e) {
+                            Log.e(TAG, "Unable to save message for preview");
+                            return;
+                        }
+                    }
                 }
-            }
-            // Launch the slideshow activity to play/view.
-            Intent intent = new Intent(context, SlideshowActivity.class);
-            intent.setData(msgUri);
-            if (requestCode > 0 && context instanceof Activity) {
-                ((Activity)context).startActivityForResult(intent, requestCode);
-            } else {
-                context.startActivity(intent);
-            }
+            }, new Runnable() {
+                @Override
+                public void run() {
+                    // Once the above background thread is complete, this runnable is run
+                    // on the UI thread to launch the slideshow activity.
+                    launchSlideshowActivity(activity, msgUri, requestCode);
+                }
+            }, R.string.building_slideshow_title);
         }
     }
 
-    public static void viewMmsMessageAttachment(Context context, WorkingMessage msg,
-            int requestCode) {
-        SlideshowModel slideshow = msg.getSlideshow();
-        if (slideshow == null) {
-            throw new IllegalStateException("msg.getSlideshow() == null");
-        }
-        if (slideshow.isSimple()) {
-            MessageUtils.viewSimpleSlideshow(context, slideshow);
+    public static void launchSlideshowActivity(Context context, Uri msgUri, int requestCode) {
+        // Launch the slideshow activity to play/view.
+        Intent intent = new Intent(context, SlideshowActivity.class);
+        intent.setData(msgUri);
+        if (requestCode > 0 && context instanceof Activity) {
+            ((Activity)context).startActivityForResult(intent, requestCode);
         } else {
-            Uri uri = msg.saveAsMms(false);
-            if (uri != null) {
-                // Pass null for the slideshow paramater, otherwise viewMmsMessageAttachment
-                // will persist the slideshow to disk again (we just did that above in saveAsMms)
-                viewMmsMessageAttachment(context, uri, null, requestCode);
-            }
+            context.startActivity(intent);
         }
+
     }
 
     /**

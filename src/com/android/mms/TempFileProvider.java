@@ -3,6 +3,9 @@
 
 package com.android.mms;
 
+import java.io.File;
+import java.io.FileNotFoundException;
+
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
@@ -11,9 +14,6 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
-
-import java.io.File;
-import java.io.FileNotFoundException;
 
 /**
  * The TempFileProvider manages a uri, backed by a file, for passing to the camera app for
@@ -154,5 +154,18 @@ public class TempFileProvider extends ContentProvider {
             return null;
         }
         return Uri.fromFile(newTempFile);
+    }
+
+    /**
+     * Pass in a path to a file and this function will return true if it thinks the path
+     * points to one of its scrap files.
+     * @param path full path of a file
+     * @return true if path is a scrap file path
+     */
+    public static boolean isTempFile(String path) {
+        // An admittedly weak determination of a temp file, but sufficient for current needs.
+        // For now, the penalty of returning true for a file that isn't a temp file is simply
+        // not storing the file's thumbnail in an on-disk thumbnail cache.
+        return path.contains(".temp");
     }
 }
